@@ -11,6 +11,7 @@ import 'movement.css';
 const SearchContainer = memo(function SearchContainer({ logo = true, cls, nav = true, navigating }) {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState([]);
+  const [activeIndex, setActiveIndex] = useState(-1);
   const debounceRef = useRef(null);
   const latestQuery = useRef('');
   const navigate = useNavigate();
@@ -25,18 +26,24 @@ const SearchContainer = memo(function SearchContainer({ logo = true, cls, nav = 
     latestQuery.current = searchQuery;
     try {
       const response = await fetch('/return?q=' + encodeURIComponent(searchQuery));
-      if (!response.ok) return setResults([]);
+      if (!response.ok) {
+        if (latestQuery.current === searchQuery) setResults([]);
+        return;
+      }
 
       const data = await response.json();
       if (latestQuery.current !== searchQuery) return;
       const list = Array.isArray(data) ? data.filter((i) => i.phrase).slice(0, 4) : [];
-      startTransition(() => setResults(list));
+      startTransition(() => {
+        setResults(list);
+        setActiveIndex(-1);
+      });
     } catch {
       if (latestQuery.current === searchQuery) setResults([]);
     }
   }, []);
 
-  const go = (strin) => {
+  const go = useCallback((strin) => {
     if (nav) {
       navigate("/search", {
         state: {
@@ -49,12 +56,14 @@ const SearchContainer = memo(function SearchContainer({ logo = true, cls, nav = 
         navigating.go(navigating.id, processedUrl);
       }
     }
-  }
+  }, [nav, navigate, navigating]);
 
   const handleInputChange = useCallback(
     (e) => {
       const newQuery = e.target.value;
       setQuery(newQuery);
+      latestQuery.current = newQuery;
+      setActiveIndex(-1);
 
       if (debounceRef.current) clearTimeout(debounceRef.current);
       if (!newQuery.trim()) {
@@ -70,12 +79,34 @@ const SearchContainer = memo(function SearchContainer({ logo = true, cls, nav = 
 
   const handleKeyDown = useCallback(
     (e) => {
+      if (e.key === 'ArrowDown' && results.length) {
+        e.preventDefault();
+        setActiveIndex((index) => (index + 1) % results.length);
+        return;
+      }
+
+      if (e.key === 'ArrowUp' && results.length) {
+        e.preventDefault();
+        setActiveIndex((index) => (index <= 0 ? results.length - 1 : index - 1));
+        return;
+      }
+
+      if (e.key === 'Escape' && results.length) {
+        setResults([]);
+        setActiveIndex(-1);
+        return;
+      }
+
       if (e.key !== 'Enter') return;
+      if (activeIndex >= 0 && results[activeIndex]) {
+        go(results[activeIndex].phrase);
+        return;
+      }
       const trimmed = query.trim();
       if (!trimmed) return;
       go(trimmed);
     },
-    [query, go],
+    [activeIndex, query, results, go],
   );
 
   const handleResultClick = useCallback(
@@ -132,6 +163,11 @@ const SearchContainer = memo(function SearchContainer({ logo = true, cls, nav = 
             <input
               type="text"
               placeholder={placeholder}
+              role="combobox"
+              aria-autocomplete="list"
+              aria-expanded={results.length > 0}
+              aria-controls="search-suggestions"
+              aria-activedescendant={activeIndex >= 0 ? `search-suggestion-${activeIndex}` : undefined}
               className="flex-1 bg-transparent outline-hidden text-[16.5px] leading-[20px] placeholder:font-[Inter] placeholder:font-medium"
               autoComplete="off"
               value={query}
@@ -144,16 +180,24 @@ const SearchContainer = memo(function SearchContainer({ logo = true, cls, nav = 
 
           {results.length > 0 && (
             <div
+              id="search-suggestions"
+              role="listbox"
               className={clsx(
                 'shadow-xl mt-0 p-2 text-[14px] w-full rounded-b-[14px] space-y-1',
                 theme[`searchResultStyle`],
                 theme[`theme-${options.theme || 'default'}`],
               )}
             >
-              {results.map((result) => (
+              {results.map((result, index) => (
                 <div
                   key={result.phrase}
-                  className="rounded-[9px] w-full h-11 hover:bg-[#d4d4d418] cursor-pointer duration-100 ease-in px-3 pl-2.5 flex items-center"
+                  id={`search-suggestion-${index}`}
+                  role="option"
+                  aria-selected={activeIndex === index}
+                  className={clsx(
+                    'rounded-[9px] w-full h-11 cursor-pointer duration-100 ease-in px-3 pl-2.5 flex items-center',
+                    activeIndex === index ? 'bg-[#d4d4d418]' : 'hover:bg-[#d4d4d418]',
+                  )}
                   onClick={() => handleResultClick(result.phrase)}
                 >
                   <svg
